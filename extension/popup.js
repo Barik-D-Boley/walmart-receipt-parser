@@ -1,6 +1,7 @@
 // Executes when I click the button on popup.html
 const scrapeButton = document.getElementById("scrapeReceipt");
 
+// Injects the scrapeReceipt into the website so it can see the necessary HTML elements
 async function injectCode() {
   // Query Chrome for the active tab in the current window
   let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -20,48 +21,56 @@ async function injectCode() {
   }
 }
 
+// Scrapes the date, tc#, store location, name, price, quantity, subtotal, tax, and total
 function scrapeReceipt(tab) {
+  const decimalNumber = /[^0-9.]/g
+
   // Checks if the page is a walmart receipt before scraping the page
   if (tab.url.startsWith("https://www.walmart.com/orders/")) {
-    
-    // Scrape the tc#, date, location, name, price, quantity, subtotal, total, tax
-    const receipt = [];
+    // 
     const items = [];
+    const itemElements = document.querySelectorAll('[data-testid="itemtile-stack"]');
 
-    const transactionCode = document.querySelector('[data-testid="digital-invoice"]').innerText.trim();
-    const receiptDate = document.querySelector('section[data-dca-type="module"] h2').innerText.trim();
-    // const storeLocation = document.querySelector('section[data-dca-type="module"] h2').innerText.trim();
-    const subtotal = document.querySelector('.bill-order-payment-subtotal > span:last-child').innerText.trim();
-    const tax = document.querySelector('.print-fees-item div:last-child span').innerText.trim();
-    const total = document.querySelector('.bill-order-total-payment > span:last-child').innerText.trim();
+    // Finds the single receipt information
+    var receiptDate = document.querySelector('.print-bill-date').innerText.trim().replace(/ purchase/g, "");
+    var transactionCode = document.querySelector('[data-testid="digital-invoice"]').innerText.trim().replace(/TC# /g, "");
+    var storeLocation = Array.from(document.querySelectorAll('h3')).find(h => h.innerText.includes('Store location')).parentElement.nextElementSibling.innerText.trim();
+    var subtotal = parseFloat(document.querySelector('.bill-order-payment-subtotal > span:last-child').innerText.trim().replace(decimalNumber, ""));
+    var tax = parseFloat(document.querySelector('.print-fees-item div:last-child span').innerText.trim().replace(decimalNumber, ""));
+    var total = parseFloat(document.querySelector('.bill-order-total-payment > span:last-child').innerText.trim().replace(decimalNumber, ""));
 
-    const elements = document.querySelectorAll('[data-testid="itemtile-stack"]');
-
-    elements.forEach((element) => {
-      const name = element.querySelector('[data-testid="productName"]').innerText.trim();
-      var price = element.querySelector('[data-testid="line-price"]').innerText.trim();
+    // Creates an object for each item on the receipt
+    itemElements.forEach((element) => {
+      // Finds the name, price, and quantity of each item
+      var name = element.querySelector('[data-testid="productName"]').innerText.trim();
+      var price = parseFloat(element.querySelector('[data-testid="line-price"]').innerText.trim().replace(decimalNumber, ""));
       var quantity = element.querySelector('.bill-item-quantity').innerText.trim();
 
-      price = parseFloat(price.replace(/[^0-9.]/g, ""));
-
+      // Changes the quantity field based on whether it's a quantity, weight, or neither
       if (quantity.includes("Qty")) {
-        quantity = parseFloat(quantity.replace(/[^0-9.]/g, ""));
+        quantity = parseFloat(quantity.replace(decimalNumber, ""));
         items.push({ name, price, quantity });
       } else if (quantity.includes("Wt")) {
-        var weight = element.querySelector('.bill-item-quantity').innerText.trim();
-        weight = weight.replace(/Wt /g, "");
+        var weight = element.querySelector('.bill-item-quantity').innerText.trim().replace(/Wt /g, "");
         items.push({ name, price, weight });
       } else {
         items.push({ name, price });
       }
     });
 
-    receipt.push({ transactionCode, receiptDate, items, subtotal, tax, total })
-    console.log(`Receipt: ${JSON.stringify(receipt, null, 2)}`);
+    // Returns the receipt JSON
+    const receiptData = { receiptDate, transactionCode, storeLocation, items, subtotal, tax, total };
+    console.log(`Receipt: ${JSON.stringify(receiptData, null, 2)}`);
+    return receiptData;
   }
   else {
     alert("This is not a walmart receipt");
   }
+}
+
+// Checks that the receipt isn't already in the JSON file before adding the new receipt
+function toSheets(receiptData) {
+  
 }
 
 scrapeButton.addEventListener("click", injectCode);
