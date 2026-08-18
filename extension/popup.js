@@ -1,5 +1,3 @@
-// import { google } from 'googleapis';
-
 // Executes when I click the button on popup.html
 const scrapeButton = document.getElementById('scrapeReceipt');
 
@@ -14,8 +12,11 @@ async function injectCode() {
     target: { tabId: tab.id },
     func: scrapeReceipt,
     args: [tab]
-  }, (receiptData) => {
-    // toSheets(receiptData)
+  }, (injectionResults) => {
+    if (injectionResults && injectionResults[0] && injectionResults[0].result) {
+      const extractedReceiptData = injectionResults[0].result;
+      toServer(extractedReceiptData);
+    } 
   });
   } else {
     alert('Could not detect the website.');
@@ -70,33 +71,28 @@ function scrapeReceipt(tab) {
 }
 
 // Checks that the receipt isn't already in the JSON file before adding the new receipt
-async function toSheets(receiptData) {
-  const auth = new google.auth.GoogleAuth({
-    keyFile: 'credentials.json', 
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-
-  const sheets = google.sheets({ version: 'v4', auth });
-
-  const request = {
-    spreadsheetId: '14lgjD_pQlHfYCQjqeQI3E93m_yajqQj7L9PbzYYk6M4',
-    requestBody: {
-      requests: [{
-        addSheet: {
-          properties: {
-            title: receiptData.receiptDate
-          }
-        }
-      }]
-    }
-  };
+async function toServer(receiptData) {
+  const LOCAL_SERVER_URL = 'http://localhost:3000/api/receipts'; 
 
   try {
-    const response = await sheets.spreadsheets.batchUpdate(request);
-    console.log(`Success! New tab created.\nSheet ID: ${response.data.reply.addSheet.properties.sheetId}`);
-    return response.data;
+    const response = await fetch(LOCAL_SERVER_URL, {
+      method: 'POST', // Specifying that we are sending data
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(receiptData) // Convert the JavaScript object to a JSON string
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! Status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log('Success! Data sent to local server:', data);
+    return data;
+    
   } catch (error) {
-    console.error('Error creating new sheet tab:', error.message);
+    console.error('Error sending data to local server:', error.message);
   }
 }
 
