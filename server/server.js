@@ -17,153 +17,208 @@ app.post('/api/receipts', async (req, res) => {
 
   try {
     // 1. Authenticate with Google
+    const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
     const auth = new google.auth.GoogleAuth({
-      keyFile: path.join(__dirname, 'credentials.json'), 
+      credentials, 
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // 2. Set up the request to create a new tab named after the date
+    // Clean date string to prevent invalid date names
+    const cleanDate = String(receiptData.receiptDate).replace(/\s*(purchase|order)/gi, '').trim();
+    const newSheetName = cleanDate;
+
+    // Fetch existing sheets with their IDs
     const response = await sheets.spreadsheets.get({
       spreadsheetId: '14lgjD_pQlHfYCQjqeQI3E93m_yajqQj7L9PbzYYk6M4',
-      fields: 'sheets.properties.title'
+      fields: 'sheets.properties(sheetId,title)'
     });
 
-    const newSheetName = receiptData.receiptDate;
-    const existingSheetNames = response.data.sheets.map(sheet => sheet.properties.title);
+    const existingSheets = response.data.sheets.map(sheet => sheet.properties.title);
+    const existingSheetObj = response.data.sheets.find(sheet => sheet.properties.title === newSheetName);
 
-    console.log(`Provided responses: ${existingSheetNames}`)
+    let targetSheetId;
+    let targetIndex;
+    let startRowIndex = 0;
+    let isNewSheet = false;
 
-    if (existingSheetNames.includes(newSheetName)) {
-      console.log(`Sheet "${newSheetName}" already exists! Skipping creation.`);
-      
-      res.status(200).json({ 
-        message: `Sheet "${newSheetName}" already exists. Skipped creation.` 
+    if (existingSheetObj) {
+      // --- SHEET EXISTS: Check for duplicate transaction code and calculate start row ---
+      targetSheetId = existingSheetObj.properties.sheetId;
+
+      // Read existing cell values on this tab
+      const sheetData = await sheets.spreadsheets.values.get({
+        spreadsheetId: '14lgjD_pQlHfYCQjqeQI3E93m_yajqQj7L9PbzYYk6M4',
+        range: `'${newSheetName}'!A:G`,
       });
+
+      const existingRows = sheetData.data.values || [];
+
+      // Check if the TC# already exists anywhere in the sheet
+      const tcExists = existingRows.some(row => 
+        row.some(cell => String(cell).includes(receiptData.transactionCode))
+      );
+
+      if (tcExists) {
+        console.log(`Transaction ${receiptData.transactionCode} already exists on sheet "${newSheetName}".`);
+        return res.status(200).json({ 
+          message: `Transaction ${receiptData.transactionCode} already exists on sheet "${newSheetName}". Skipped creation.` 
+        });
+      }
+
+      // Set start row index to append data below existing rows (leaving a 1-row gap)
+      startRowIndex = existingRows.length > 0 ? existingRows.length + 1 : 0;
+
     } else {
-      // 1. Generate a random unique integer ID for the new sheet tab
-      const newSheetId = Math.floor(Math.random() * 1000000000);
+      // --- SHEET DOES NOT EXIST: Create new sheet tab in chronological order ---
+      isNewSheet = true;
+      targetSheetId = Math.floor(Math.random() * 1000000000);
 
-      // Helper function to safely format values
-      const toCellValue = (val, isNumber = false) => {
-        if (val === undefined || val === null || val === '') return { stringValue: '' };
-        if (isNumber && !isNaN(Number(val))) {
-          return { numberValue: Number(val) };
+      const newDateVal = new Date(newSheetName).getTime();
+      targetIndex = existingSheets.length;
+
+      for (let i = 0; i < existingSheets.length; i++) {
+        const sheetTitle = existingSheets[i];
+        if (sheetTitle.toLowerCase() === 'master') continue;
+
+        const sheetDateVal = new Date(sheetTitle).getTime();
+        if (!isNaN(sheetDateVal) && newDateVal > sheetDateVal) {
+          targetIndex = i;
+          break;
         }
-        return { stringValue: String(val) };
-      };
+      }
+    }
 
-      // 2. Prepare our data lists
-      const summaryData = [
-        { label: 'Date', value: toCellValue(receiptData.receiptDate) },
-        { label: 'Transaction Code', value: toCellValue(receiptData.transactionCode) },
-        { label: 'Location', value: toCellValue(receiptData.storeLocation) },
-        { label: 'Subtotal', value: toCellValue(receiptData.subtotal, true) },
-        { label: 'Tax', value: toCellValue(receiptData.tax, true) },
-        { label: 'Total', value: toCellValue(receiptData.total, true) }
-      ];
+    // Helper function to safely format values
+    const toCellValue = (val, isNumber = false) => {
+      if (val === undefined || val === null || val === '') return { stringValue: '' };
+      if (isNumber && !isNaN(Number(val))) {
+        return { numberValue: Number(val) };
+      }
+      return { stringValue: String(val) };
+    };
 
-      // Default to an empty array if no items are passed
-      const items = receiptData.items || []; 
+    // Define accounting format
+    const accountingFormat = {
+      type: 'CURRENCY',
+      pattern: '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"??_);_(@_)'
+    };
 
-      // Calculate the total number of rows we need. 
-      // It's either the length of our summary data (6) OR the number of items + 1 (for the header row), whichever is larger.
-      const totalRowCount = Math.max(summaryData.length, items.length + 1);
+    // Generate dynamic rows
+    const summaryData = [
+      { label: 'Date', value: toCellValue(receiptData.receiptDate) },
+      { label: 'Transaction Code', value: toCellValue(receiptData.transactionCode) },
+      { label: 'Location', value: toCellValue(receiptData.storeLocation), isClip: true },
+      { label: 'Subtotal', value: toCellValue(receiptData.subtotal, true), isCurrency: true },
+      { label: 'Tax', value: toCellValue(receiptData.tax, true), isCurrency: true },
+      { label: 'Total', value: toCellValue(receiptData.total, true), isCurrency: true }
+    ];
 
-      // 3. Build the rows dynamically
-      const dynamicRows = [];
+    const items = receiptData.items || []; 
+    const totalRowCount = Math.max(summaryData.length, items.length + 1);
+    const dynamicRows = [];
 
-      for (let i = 0; i < totalRowCount; i++) {
-        const rowValues = [];
+    for (let i = 0; i < totalRowCount; i++) {
+      const rowValues = [];
 
-        // --- Columns A & B: Summary Data ---
-        if (i < summaryData.length) {
-          rowValues.push({
-            userEnteredValue: { stringValue: summaryData[i].label },
-            userEnteredFormat: { textFormat: { bold: true } }
-          }); // Col A
-          rowValues.push({ userEnteredValue: summaryData[i].value }); // Col B
-        } else {
-          rowValues.push({}); // Col A empty
-          rowValues.push({}); // Col B empty
-        }
+      // --- Columns A & B: Summary Data ---
+      if (i < summaryData.length) {
+        rowValues.push({
+          userEnteredValue: { stringValue: summaryData[i].label },
+          userEnteredFormat: { textFormat: { bold: true } }
+        }); 
 
-        // --- Column C: Spacer ---
-        rowValues.push({}); // Col C is always empty
+        const colBCell = { userEnteredValue: summaryData[i].value };
 
-        // --- Columns D, E, F, G: Item Data ---
-        if (i === 0) {
-          // Row 0 gets the Headers
-          rowValues.push({ userEnteredValue: { stringValue: 'Name' }, userEnteredFormat: { textFormat: { bold: true } } });
-          rowValues.push({ userEnteredValue: { stringValue: 'Price' }, userEnteredFormat: { textFormat: { bold: true } } });
-          rowValues.push({ userEnteredValue: { stringValue: 'Quantity' }, userEnteredFormat: { textFormat: { bold: true } } });
-          rowValues.push({ userEnteredValue: { stringValue: 'Weight' }, userEnteredFormat: { textFormat: { bold: true } } });
-        } else {
-          // Offset by 1 since items start on row index 1
-          const itemIndex = i - 1; 
-          
-          if (itemIndex < items.length) {
-            const item = items[itemIndex];
-            // Note: Change 'item.name' to match whatever your actual object keys are (e.g., item.description)
-            rowValues.push({ userEnteredValue: toCellValue(item.name) }); // Col D
-            rowValues.push({ userEnteredValue: { numberValue: item.price }, userEnteredFormat: { numberFormat: { 
-              type: 'CURRENCY', 
-              pattern: '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"??_);_(@_)' }
-            }});
-            rowValues.push({ userEnteredValue: toCellValue(item.quantity, true) }); // Col F
-            rowValues.push({ userEnteredValue: toCellValue(item.weight) }); // Col G
-          } else {
-            rowValues.push({}, {}, {}, {}); // Empty D, E, F, G if we are out of items
+        // Set formatting properties if currency or clipped
+        if (summaryData[i].isCurrency || summaryData[i].isClip) {
+          colBCell.userEnteredFormat = {};
+          if (summaryData[i].isCurrency) {
+            colBCell.userEnteredFormat.numberFormat = accountingFormat;
+          }
+          if (summaryData[i].isClip) {
+            colBCell.userEnteredFormat.wrapStrategy = 'CLIP';
           }
         }
 
-        dynamicRows.push({ values: rowValues });
+        rowValues.push(colBCell);
+      } else {
+        rowValues.push({}, {});
       }
 
-      // 4. Assemble the final write request
-      const writeRequest = {
-        spreadsheetId: '14lgjD_pQlHfYCQjqeQI3E93m_yajqQj7L9PbzYYk6M4',
-        requestBody: {
-          requests: [
-            {
-              addSheet: {
-                properties: {
-                  title: String(receiptData.receiptDate),
-                  sheetId: newSheetId
-                }
-              }
-            },
-            {
-              updateCells: {
-                range: {
-                  sheetId: newSheetId,
-                  startRowIndex: 0,
-                  endRowIndex: dynamicRows.length, // Automatically size the range based on our loop
-                  startColumnIndex: 0,
-                  endColumnIndex: 7 // Columns A through G
-                },
-                rows: dynamicRows, // Plug in our generated rows here
-                fields: 'userEnteredValue,userEnteredFormat.textFormat.bold,userEnteredFormat.numberFormat'
-              }
-            }
-          ]
+      // --- Column C: Spacer (This keeps C empty!) ---
+      rowValues.push({});
+
+      // --- Columns D, E, F, G: Item Data ---
+      if (i === 0) {
+        rowValues.push({ userEnteredValue: { stringValue: 'Name' }, userEnteredFormat: { textFormat: { bold: true } } });
+        rowValues.push({ userEnteredValue: { stringValue: 'Price' }, userEnteredFormat: { textFormat: { bold: true } } });
+        rowValues.push({ userEnteredValue: { stringValue: 'Quantity' }, userEnteredFormat: { textFormat: { bold: true } } });
+        rowValues.push({ userEnteredValue: { stringValue: 'Weight' }, userEnteredFormat: { textFormat: { bold: true } } });
+      } else {
+        const itemIndex = i - 1; 
+        if (itemIndex < items.length) {
+          const item = items[itemIndex];
+          rowValues.push({ userEnteredValue: toCellValue(item.name) });
+          rowValues.push({ 
+            userEnteredValue: { numberValue: item.price }, 
+            userEnteredFormat: { numberFormat: accountingFormat }
+          }); 
+          rowValues.push({ userEnteredValue: toCellValue(item.quantity, true) });
+          rowValues.push({ userEnteredValue: toCellValue(item.weight) });
+        } else {
+          rowValues.push({}, {}, {}, {});
         }
-      };
+      }
 
-      // 5. Execute the Google Sheets API call
-      await sheets.spreadsheets.batchUpdate(writeRequest);
+      dynamicRows.push({ values: rowValues });
+    }
 
-      console.log(`Success! New tab created. Sheet ID: ${newSheetId}`);
+    // Assemble batch requests conditionally
+    const apiRequests = [];
 
-      res.status(200).json({ 
-        message: 'Successfully created Google Sheet tab!',
-        sheetId: newSheetId
+    if (isNewSheet) {
+      apiRequests.push({
+        addSheet: {
+          properties: {
+            title: newSheetName,
+            sheetId: targetSheetId,
+            index: targetIndex
+          }
+        }
       });
     }
+
+    apiRequests.push({
+      updateCells: {
+        range: {
+          sheetId: targetSheetId,
+          startRowIndex: startRowIndex,
+          endRowIndex: startRowIndex + dynamicRows.length,
+          startColumnIndex: 0,
+          endColumnIndex: 7
+        },
+        rows: dynamicRows,
+        fields: 'userEnteredValue,userEnteredFormat.textFormat.bold,userEnteredFormat.numberFormat,userEnteredFormat.wrapStrategy'
+      }
+    });
+
+    // Execute the request
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: '14lgjD_pQlHfYCQjqeQI3E93m_yajqQj7L9PbzYYk6M4',
+      requestBody: { requests: apiRequests }
+    });
+
+    console.log(`Success! Data appended to tab "${newSheetName}" starting at row ${startRowIndex + 1}.`);
+
+    res.status(200).json({ 
+      message: `Successfully processed transaction for "${newSheetName}"!`,
+      sheetId: targetSheetId
+    });
+    
   } catch (error) {
-    console.error('Error creating new sheet tab:', error.message);
-    // Send the error back to the extension so you can see it in the browser console
+    console.error('Error processing receipt:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
