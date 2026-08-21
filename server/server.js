@@ -1,40 +1,35 @@
 const express = require('express');
 const cors = require('cors');
 const { google } = require('googleapis');
-const path = require('path');
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 
 // Middleware to parse JSON bodies and allow cross-origin requests
 app.use(express.json());
 app.use(cors());
 
-// The endpoint your Chrome extension will hit
+// Server endpoint
 app.post('/api/receipts', async (req, res) => {
   const receiptData = req.body;
   console.log(`Received data for transaction: ${receiptData.transactionCode}`);
 
   try {
-    // 1. Authenticate with Google
+    // Authenticates with Google
+    const sheets = google.sheets({ version: 'v4', auth });
     const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
     const auth = new google.auth.GoogleAuth({
       credentials, 
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
+    });  
 
-    const sheets = google.sheets({ version: 'v4', auth });
-
-    // Clean date string to prevent invalid date names
-    const cleanDate = String(receiptData.receiptDate).replace(/\s*(purchase|order)/gi, '').trim();
-    const newSheetName = cleanDate;
+    const newSheetName = String(receiptData.receiptDate).trim();
 
     // Fetch existing sheets with their IDs
     const response = await sheets.spreadsheets.get({
       spreadsheetId: '14lgjD_pQlHfYCQjqeQI3E93m_yajqQj7L9PbzYYk6M4',
       fields: 'sheets.properties(sheetId,title)'
     });
-
     const existingSheets = response.data.sheets.map(sheet => sheet.properties.title);
     const existingSheetObj = response.data.sheets.find(sheet => sheet.properties.title === newSheetName);
 
@@ -44,22 +39,18 @@ app.post('/api/receipts', async (req, res) => {
     let isNewSheet = false;
 
     if (existingSheetObj) {
-      // --- SHEET EXISTS: Check for duplicate transaction code and calculate start row ---
+      // Checks for duplicate transaction code and calculates the start row
       targetSheetId = existingSheetObj.properties.sheetId;
 
-      // Read existing cell values on this tab
+      // Reads existing cell values on this tab
       const sheetData = await sheets.spreadsheets.values.get({
         spreadsheetId: '14lgjD_pQlHfYCQjqeQI3E93m_yajqQj7L9PbzYYk6M4',
         range: `'${newSheetName}'!A:G`,
       });
-
       const existingRows = sheetData.data.values || [];
 
-      // Check if the TC# already exists anywhere in the sheet
-      const tcExists = existingRows.some(row => 
-        row.some(cell => String(cell).includes(receiptData.transactionCode))
-      );
-
+      // Checks if the TC# already exists in the sheet
+      const tcExists = existingRows.some(row => row.some(cell => String(cell).includes(receiptData.transactionCode)));
       if (tcExists) {
         console.log(`Transaction ${receiptData.transactionCode} already exists on sheet "${newSheetName}".`);
         return res.status(200).json({ 
@@ -67,7 +58,7 @@ app.post('/api/receipts', async (req, res) => {
         });
       }
 
-      // Set start row index to append data below existing rows (leaving a 1-row gap)
+      // Sets start row index to append data below existing rows (leaving a 1-row gap)
       startRowIndex = existingRows.length > 0 ? existingRows.length + 1 : 0;
 
     } else {
@@ -225,5 +216,5 @@ app.post('/api/receipts', async (req, res) => {
 
 // Start the server
 app.listen(port, () => {
-  console.log(`Server is up and listening at http://localhost:${port}`);
+  console.log(`Server is up and listening on port ${port}`);
 });
