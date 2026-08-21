@@ -41,7 +41,7 @@ async function scrapeAndSendToServer() {
     const receiptData = { receiptDate, orderNumber, transactionCode, storeLocation, subtotal, tax, total, items };
 
     // --- SEND TO SERVER ---
-    const response = await fetch('https://your-app-name.onrender.com/api/receipts', {
+    const response = await fetch('https://walmart-receipt-extension-1.onrender.com/api/receipts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(receiptData)
