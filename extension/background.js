@@ -57,7 +57,11 @@ chrome.action.onClicked.addListener(async (tab) => {
     // Starts the fetch
     fetch(`${API_BASE_URL}/api/receipts`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'x-spreadsheet-id': spreadsheetId,
+        'x-google-credentials': encodeURIComponent(typeof googleCredentials === 'string' ? googleCredentials : JSON.stringify(googleCredentials))
+      },
       body: JSON.stringify(receiptData)
     })
     .then(async (res) => {

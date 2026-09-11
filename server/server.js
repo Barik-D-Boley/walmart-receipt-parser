@@ -17,14 +17,14 @@ app.post('/api/receipts', async (req, res) => {
   const rawCredentials = req.headers['x-google-credentials'];
 
   if (!spreadsheetId || !rawCredentials) {
-    return res.status(400).json({ 
-      error: 'Missing required headers: x-spreadsheet-id or x-google-credentials' 
-    });
+    return res.status(400).json({ error: 'Missing required headers: x-spreadsheet-id or x-google-credentials' });
   }
 
   let sheets;
   try {
-    const credentials = typeof rawCredentials === 'string' ? JSON.parse(rawCredentials) : rawCredentials;
+    const decodedCreds = decodeURIComponent(rawCredentials);
+    const credentials = typeof decodedCreds === 'string' ? JSON.parse(decodedCreds) : decodedCreds;
+
     const auth = new google.auth.GoogleAuth({
       credentials, 
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
