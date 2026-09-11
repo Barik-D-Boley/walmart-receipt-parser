@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const { google } = require('googleapis');
@@ -11,23 +13,36 @@ app.use(cors());
 
 // Server endpoint
 app.post('/api/receipts', async (req, res) => {
-  const receiptData = req.body;
-  console.log(`Received data for transaction: ${receiptData.transactionCode}`);
+  const spreadsheetId = req.headers['x-spreadsheet-id'];
+  const rawCredentials = req.headers['x-google-credentials'];
 
+  if (!spreadsheetId || !rawCredentials) {
+    return res.status(400).json({ 
+      error: 'Missing required headers: x-spreadsheet-id or x-google-credentials' 
+    });
+  }
+
+  let sheets;
   try {
-    // Authenticates with Google
-    const sheets = google.sheets({ version: 'v4', auth });
-    const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+    const credentials = typeof rawCredentials === 'string' ? JSON.parse(rawCredentials) : rawCredentials;
     const auth = new google.auth.GoogleAuth({
       credentials, 
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });  
+    sheets = google.sheets({ version: 'v4', auth });
+  } catch (err) {
+    return res.status(400).json({ error: 'Invalid Google Credentials format in header.' });
+  }
 
+  const receiptData = req.body;
+  console.log(`Received data for transaction: ${receiptData.transactionCode}`);
+
+  try {
     const newSheetName = String(receiptData.receiptDate).trim();
 
     // Fetch existing sheets with their IDs
     const response = await sheets.spreadsheets.get({
-      spreadsheetId: '14lgjD_pQlHfYCQjqeQI3E93m_yajqQj7L9PbzYYk6M4',
+      spreadsheetId: spreadsheetId,
       fields: 'sheets.properties(sheetId,title)'
     });
     const existingSheets = response.data.sheets.map(sheet => sheet.properties.title);
@@ -44,7 +59,7 @@ app.post('/api/receipts', async (req, res) => {
 
       // Reads existing cell values on this tab
       const sheetData = await sheets.spreadsheets.values.get({
-        spreadsheetId: '14lgjD_pQlHfYCQjqeQI3E93m_yajqQj7L9PbzYYk6M4',
+        spreadsheetId: spreadsheetId,
         range: `'${newSheetName}'!A:G`,
       });
       const existingRows = sheetData.data.values || [];
@@ -90,13 +105,13 @@ app.post('/api/receipts', async (req, res) => {
       return { stringValue: String(val) };
     };
 
-    // Define accounting format
+    // Defines accounting format
     const accountingFormat = {
       type: 'CURRENCY',
       pattern: '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"??_);_(@_)'
     };
 
-    // Generate dynamic rows
+    // Generates dynamic rows
     const summaryData = [
       { label: 'Date', value: toCellValue(receiptData.receiptDate) },
       { label: 'Transaction Code', value: toCellValue(receiptData.transactionCode) },
@@ -122,7 +137,7 @@ app.post('/api/receipts', async (req, res) => {
 
         const colBCell = { userEnteredValue: summaryData[i].value };
 
-        // Set formatting properties if currency or clipped
+        // Sets formatting properties if currency or clipped
         if (summaryData[i].isCurrency || summaryData[i].isClip) {
           colBCell.userEnteredFormat = {};
           if (summaryData[i].isCurrency) {
@@ -138,7 +153,7 @@ app.post('/api/receipts', async (req, res) => {
         rowValues.push({}, {});
       }
 
-      // --- Column C: Spacer (This keeps C empty!) ---
+      // --- Column C: Spacer ---
       rowValues.push({});
 
       // --- Columns D, E, F, G: Item Data ---
@@ -166,7 +181,7 @@ app.post('/api/receipts', async (req, res) => {
       dynamicRows.push({ values: rowValues });
     }
 
-    // Assemble batch requests conditionally
+    // Assembles batch requests conditionally
     const apiRequests = [];
 
     if (isNewSheet) {
@@ -195,9 +210,9 @@ app.post('/api/receipts', async (req, res) => {
       }
     });
 
-    // Execute the request
+    // Executes the request
     await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: '14lgjD_pQlHfYCQjqeQI3E93m_yajqQj7L9PbzYYk6M4',
+      spreadsheetId: spreadsheetId,
       requestBody: { requests: apiRequests }
     });
 
@@ -214,7 +229,10 @@ app.post('/api/receipts', async (req, res) => {
   }
 });
 
-// Start the server
+// Starts the server
 app.listen(port, () => {
   console.log(`Server is up and listening on port ${port}`);
 });
+
+// Export app for serverless platforms like Vercel
+module.exports = app;

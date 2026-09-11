@@ -1,42 +1,120 @@
+// Toggle between production and local development
+const developerMode = false;
+const API_BASE_URL = (developerMode) ? 'http://localhost:3000' : 'https://walmart-receipt-extension.onrender.com';
+
+// Checks local storage and dynamically toggles popup behavior
+async function updatePopupState() {
+  const { googleCredentials, spreadsheetId } = await chrome.storage.local.get(['googleCredentials', 'spreadsheetId']);
+
+  if (!googleCredentials || !spreadsheetId) {
+    // Missing credentials: enable popup UI on left-click
+    await chrome.action.setPopup({ popup: 'options.html' });
+  } else {
+    // Credentials present: disable popup so left-click fires chrome.action.onClicked
+    await chrome.action.setPopup({ popup: '' });
+  }
+}
+
+// Run state check on install, browser startup, and when storage updates
+chrome.runtime.onInstalled.addListener(updatePopupState);
+chrome.runtime.onStartup.addListener(updatePopupState);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local') updatePopupState();
+});
+
+// Run once when background service worker wakes up
+updatePopupState();
+
 chrome.action.onClicked.addListener(async (tab) => {
-  // Check if we are on a valid Walmart receipt page
-  if (!tab.url || !tab.url.startsWith('https://www.walmart.com/orders/')) {
+  // Pulls saved .env credentials from local Chrome storage
+  const { googleCredentials, spreadsheetId } = await chrome.storage.local.get(['googleCredentials', 'spreadsheetId']);
+
+  // Alerts the user if credentials have not been uploaded yet
+  if (!googleCredentials || !spreadsheetId) {
     chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: () => alert("Error: This is not a Walmart receipt page.")
+      func: () => alert("Missing credentials! Please right-click the extension icon, select Options, and upload your .env file.")
     });
     return;
   }
 
-  // Alert the user that the process has started
-  chrome.scripting.executeScript({
+  // Executes scraper and gets returned data
+  const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: () => alert("Processing receipt... Please wait.")
+    func: scrapeReceiptData 
   });
 
-  // Inject and run the scraper function
-  chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: scrapeAndSendToServer
-  });
+  const receiptData = results[0]?.result;
+
+  // Performs the fetch from background.js
+  if (receiptData) {
+    // Injects waiting alert
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => alert("Processing receipt... Please wait. The server might take a moment to wake up.")
+    });
+    
+    // Starts the fetch
+    fetch(`${API_BASE_URL}/api/receipts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(receiptData)
+    })
+    .then(async (res) => {
+      if (res.ok) {
+        // Injects a success alert into the webpage
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (msg) => alert(msg),
+          args: ['Success! Receipt synced to your spreadsheet.']
+        });
+      } else {
+        // Injects an error alert into the webpage
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (msg) => alert(msg),
+          args: [`Server Error: Received status code ${res.status}`]
+        });
+      }
+    })
+    .catch(err => {
+      // Injects a connection error alert into the webpage
+      chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (msg) => alert(msg),
+        args: ["Connection Error: The server didn't respond. It might be waking up from sleep, try again in 30 seconds."]
+      });
+      console.error('Server error:', err);
+    });
+  }
 });
 
 // This function gets injected and runs inside the actual webpage
-async function scrapeAndSendToServer() {
+async function scrapeReceiptData() {
   try {
+    // Common regex
     const decimalNumber = /[^0-9.]/g;
 
     // Scrapes individual data from the receipt page
     let receiptDate = document.querySelector('.print-bill-date')?.innerText?.trim().replace(/\s*(purchase|order)/gi, '') || '';
     let transactionCode = document.querySelector('[data-testid="digital-invoice"]')?.innerText?.trim().replace(/TC# /g, '') || '';
-    let orderNumber = document.querySelector('[data-testid="order-number"]')?.innerText?.trim() || '';
+    let orderNumber = document.querySelector('[data-testid="order-number"]')?.innerText?.trim().replace(/Order# /g, '') || '';
     let storeLocation = Array.from(document.querySelectorAll('h3')).find(h => h.innerText?.includes('Store location'))?.parentElement?.nextElementSibling?.innerText?.trim() || '';
-    let subtotal = parseFloat(document.querySelector('.bill-order-payment-subtotal > span:last-child')?.innerText?.trim().replace(decimalNumber, '') || '0');
-    let tax = parseFloat(document.querySelector('.print-fees-item div:last-child span')?.innerText?.trim().replace(decimalNumber, '') || '0');
-    let total = parseFloat(document.querySelector('.bill-order-total-payment > span:last-child')?.innerText?.trim().replace(decimalNumber, '') || '0');
+
+    const findPrice = (keyword, exclude) => {
+      const row = Array.from(document.querySelectorAll('.justify-between')).find(el => {
+        const text = el.textContent || '';
+        return text.includes(keyword) && (!exclude || !text.includes(exclude)) && text.includes('$');
+      });
+      return row ? parseFloat((row.textContent.match(/\$([0-9,.]+)/) || [0, '0'])[1]) : 0;
+    };
+
+    let subtotal = findPrice('Subtotal');
+    let tax = findPrice('Taxes');
+    let total = findPrice('Total', 'Subtotal');
 
     // Scrapes items from the receipt
-    let items = [];
+    const items = [];
     const itemElements = document.querySelectorAll('[data-testid="itemtile-stack"]');
 
     itemElements.forEach((element) => {
@@ -44,40 +122,38 @@ async function scrapeAndSendToServer() {
       let price = parseFloat((element.querySelector('[data-testid="line-price"]')?.innerText?.trim() || '0').replace(decimalNumber, ''));
       let quantityText = element.querySelector('.bill-item-quantity')?.innerText?.trim() || '';
 
-      // Checks if the item has a quantity, weight, or neither and updates the text accordingly 
+      // Determines the base quantity for the current scraped item
+      let currentQty = 1; 
+      let currentWeight = null;
+
       if (quantityText.includes('Qty')) {
-        let quantity = parseFloat(quantityText.replace(decimalNumber, ''));
-        items.push({ name, price, quantity });
+        currentQty = parseFloat(quantityText.replace(decimalNumber, ''));
       } else if (quantityText.includes('Wt')) {
-        let weight = quantityText.replace(/Wt /g, '');
-        items.push({ name, price, weight });
+        currentWeight = quantityText.replace(/Wt /g, '');
+      }
+
+      // Checks if this exact item is already in our array
+      let existingItem = items.find(item => item.name === name && item.price === price && !currentWeight);
+
+      // Combines or adds new
+      if (existingItem) {
+        // If it exists, just add the current quantity to the existing total
+        existingItem.quantity += currentQty;
       } else {
-        items.push({ name, price });
+        // If it's new, push it to the array
+        let newItem = { name, price };
+        if (currentWeight) {
+          newItem.weight = currentWeight;
+        } else {
+          newItem.quantity = currentQty;
+        }
+        items.push(newItem);
       }
     });
 
-// ----------------
-// Make transaction code variable so that it works with orders as well
-// ----------------
-    const receiptData = { receiptDate, transactionCode, storeLocation, subtotal, tax, total, items };
-
-    // Sends receiptData to the server
-    const response = await fetch('https://walmart-receipt-extension-1.onrender.com/api/receipts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(receiptData)
-    });
-
-    // Handles Server Response Alerts
-    if (response.ok) {
-      const result = await response.json();
-      alert(`Success! ${result.message}`);
-    } else {
-      alert(`Server Error: Received status code ${response.status}`);
-    }
-
+    return { receiptDate, transactionCode, orderNumber, storeLocation, subtotal, tax, total, items };
   } catch (error) {
-    alert("Connection Error: The server didn't respond. It might be waking up from sleep, try again in 30 seconds.");
+    alert("Scraper Error: Could not read the receipt data from this page.");
     console.error("Scraper Error:", error);
   }
 }

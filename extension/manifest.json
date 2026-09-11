@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Walmart Receipt Parser",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Scrapes Walmart receipt information from a specific receipt and pushes it to Google Sheets",
   "icons": {
     "16": "icons/icon.png",
@@ -14,17 +14,21 @@
     "default_icon": "icons/icon.png"
   },
   "permissions": [
-    "storage",
     "activeTab",
+    "declarativeContent",
     "scripting",
-    "declarativeContent"
+    "storage"
   ],
   "host_permissions": [
-    "http://localhost:5000/*",
+    "http://localhost:3000/*",
+    "https://*.vercel.app/*",
     "https://*.googleapis.com/*",
     "https://script.google.com/*"
   ],
   "background": {
     "service_worker": "background.js"
+  },
+  "options_ui": { 
+    "page": "options.html"
   }
 }

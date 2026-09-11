@@ -20,6 +20,7 @@
     "cross-spawn": "^7.0.6",
     "data-uri-to-buffer": "^4.0.1",
     "debug": "^4.4.3",
+    "dotenv": "^17.4.2",
     "dunder-proto": "^1.0.1",
     "eastasianwidth": "^0.2.0",
     "ecdsa-sig-formatter": "^1.0.11",
@@ -87,7 +88,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "node --watch server/server.js",
-    "start": "node server/server.js"
+    "start": "node server/server.js",
+    "format-env": "node scripts/format-env.js"
   },
   "repository": {
     "type": "git",
