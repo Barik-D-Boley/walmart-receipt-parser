@@ -65,19 +65,20 @@ chrome.action.onClicked.addListener(async (tab) => {
       body: JSON.stringify(receiptData)
     })
     .then(async (res) => {
+      const data = await res.json();
+
       if (res.ok) {
-        // Injects a success alert into the webpage
+        // Displays server message (e.g., "Transaction already exists. Skipped creation.")
         chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: (msg) => alert(msg),
-          args: ['Success! Receipt synced to your spreadsheet.']
+          args: [data.message || 'Success! Receipt synced to your spreadsheet.']
         });
       } else {
-        // Injects an error alert into the webpage
         chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: (msg) => alert(msg),
-          args: [`Server Error: Received status code ${res.status}`]
+          args: [`Server Error: ${data.error || `Received status code ${res.status}`}`]
         });
       }
     })
