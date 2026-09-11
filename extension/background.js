@@ -1,6 +1,6 @@
 // Toggle between production and local development
 const developerMode = false;
-const API_BASE_URL = (developerMode) ? 'http://localhost:3000' : 'https://walmart-receipt-extension.onrender.com';
+const API_BASE_URL = (developerMode) ? 'http://localhost:3000' : 'https://walmart-receipt-parser.vercel.app';
 
 // Checks local storage and dynamically toggles popup behavior
 async function updatePopupState() {

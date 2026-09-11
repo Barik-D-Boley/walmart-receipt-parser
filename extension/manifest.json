@@ -21,7 +21,7 @@
   ],
   "host_permissions": [
     "http://localhost:3000/*",
-    "https://*.vercel.app/*",
+    "https://walmart-receipt-parser.vercel.app/*",
     "https://*.googleapis.com/*",
     "https://script.google.com/*"
   ],
