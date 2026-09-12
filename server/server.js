@@ -158,21 +158,29 @@ app.post('/api/receipts', async (req, res) => {
 
       // --- Columns D, E, F, G: Item Data ---
       if (i === 0) {
-        rowValues.push({ userEnteredValue: { stringValue: 'Name' }, userEnteredFormat: { textFormat: { bold: true } } });
-        rowValues.push({ userEnteredValue: { stringValue: 'Price' }, userEnteredFormat: { textFormat: { bold: true } } });
-        rowValues.push({ userEnteredValue: { stringValue: 'Quantity' }, userEnteredFormat: { textFormat: { bold: true } } });
-        rowValues.push({ userEnteredValue: { stringValue: 'Weight' }, userEnteredFormat: { textFormat: { bold: true } } });
+        // Headers
+        rowValues.push({ userEnteredValue: { stringValue: 'Name' }, userEnteredFormat: { textFormat: { bold: true }, horizontalAlignment: 'CENTER' } });
+        rowValues.push({ userEnteredValue: { stringValue: 'Price' }, userEnteredFormat: { textFormat: { bold: true }, horizontalAlignment: 'CENTER' } });
+        rowValues.push({ userEnteredValue: { stringValue: 'Quantity' }, userEnteredFormat: { textFormat: { bold: true }, horizontalAlignment: 'CENTER' } });
+        rowValues.push({ userEnteredValue: { stringValue: 'Weight' }, userEnteredFormat: { textFormat: { bold: true }, horizontalAlignment: 'CENTER' } });
       } else {
+        // Item Data
         const itemIndex = i - 1; 
         if (itemIndex < items.length) {
           const item = items[itemIndex];
-          rowValues.push({ userEnteredValue: toCellValue(item.name) });
-          rowValues.push({ 
+          rowValues.push({ userEnteredValue: toCellValue(item.name) }); // Name
+          rowValues.push({  // Price
             userEnteredValue: { numberValue: item.price }, 
             userEnteredFormat: { numberFormat: accountingFormat }
           }); 
-          rowValues.push({ userEnteredValue: toCellValue(item.quantity, true) });
-          rowValues.push({ userEnteredValue: toCellValue(item.weight) });
+          rowValues.push({  // Quantity (Center Aligned)
+            userEnteredValue: toCellValue(item.quantity, true),
+            userEnteredFormat: { horizontalAlignment: 'CENTER' }
+          });
+          rowValues.push({  // Weight (Center Aligned)
+            userEnteredValue: toCellValue(item.weight),
+            userEnteredFormat: { horizontalAlignment: 'CENTER' }
+          });
         } else {
           rowValues.push({}, {}, {}, {});
         }
@@ -206,7 +214,23 @@ app.post('/api/receipts', async (req, res) => {
           endColumnIndex: 7
         },
         rows: dynamicRows,
-        fields: 'userEnteredValue,userEnteredFormat.textFormat.bold,userEnteredFormat.numberFormat,userEnteredFormat.wrapStrategy'
+        fields: 'userEnteredValue,userEnteredFormat.textFormat.bold,userEnteredFormat.numberFormat,userEnteredFormat.wrapStrategy,userEnteredFormat.horizontalAlignment'
+      }
+    });
+
+    // Sets column widths for Column F and Column G to 70 pixels
+    apiRequests.push({
+      updateDimensionProperties: {
+        range: {
+          sheetId: targetSheetId,
+          dimension: 'COLUMNS',
+          startIndex: 5, // Column F (0-indexed)
+          endIndex: 7    // Column G (End index is exclusive, so 7 covers 5 and 6)
+        },
+        properties: {
+          pixelSize: 70
+        },
+        fields: 'pixelSize'
       }
     });
 
