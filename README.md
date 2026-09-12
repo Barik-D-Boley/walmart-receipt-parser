@@ -11,10 +11,13 @@ Built with a **Chrome Extension (Manifest V3)** frontend and an **Express.js / G
 
 ## Visual Overview
 
-| Chrome Extension Action | Automated Google Sheet Output |
-| :---: | :---: |
-| ![Extension Demo](docs/extension-demo.gif) | ![Spreadsheet Output](docs/sheets-output.png) |
-| *1-Click DOM Parsing on Walmart.com* | *Dynamic tab creation & Accounting formatting* |
+**Chrome Extension Action (1-Click DOM Parsing)**
+![Extension Demo](docs/extension-demo.gif) 
+
+---
+
+**Automated Google Sheet Output**
+![Google Sheets Output](docs/sheets-output.png)
 
 ## System Architecture
 
@@ -98,7 +101,7 @@ Because this extension writes directly to your personal Google Drive, you must g
 
 1. Clone this repository to your computer:
    ```bash
-   git clone https://github.com/your-username/walmart-receipt-parser.git
+   git clone https://github.com/Barik-D-Boley/walmart-receipt-parser.git
    cd walmart-receipt-parser
    ```
 2. Open Chrome and navigate to `chrome://extensions/`.
@@ -168,7 +171,7 @@ Because this extension writes directly to your personal Google Drive, you must g
 
 4. **Reload Extension on Frontend Changes:**
    * Open `chrome://extensions/` and click the **Reload** (↺) icon on your extension card.
-   > **Note:** Changes inside the `extension/` directory require reloading the extension. Changes to `server/server.js` automatically auto-restart the server via `node --watch` and require no action.
+   > **Note:** Changes inside the `extension/` directory require reloading the extension. Changes to `server/server.js` automatically restart the server via `node --watch` and require no action.
 
 ## Usage Instructions
 

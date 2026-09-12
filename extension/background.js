@@ -87,9 +87,9 @@ chrome.action.onClicked.addListener(async (tab) => {
       chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: (msg) => alert(msg),
-        args: ["Connection Error: The server didn't respond. It might be waking up from sleep, try again in 30 seconds."]
+        args: [`Connection Error: ${err.message}. Check the extension console for more details.`]
       });
-      console.error('Server error:', err);
+      console.error('Fetch error details:', err);
     });
   }
 });
