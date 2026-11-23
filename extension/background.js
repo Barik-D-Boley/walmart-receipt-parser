@@ -1,3 +1,6 @@
+// Shared JSON parser (WalmartOrderParser) used to validate and merge receipt data
+importScripts('order-parser.js');
+
 // Toggle between production and local development
 const developerMode = false;
 const API_BASE_URL = (developerMode) ? 'http://localhost:3000' : 'https://walmart-receipt-parser.vercel.app';
@@ -38,13 +41,15 @@ chrome.action.onClicked.addListener(async (tab) => {
     return;
   }
 
-  // Executes scraper and gets returned data
-  const results = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: scrapeReceiptData 
-  });
+  const receiptData = await getReceiptData(tab.id);
 
-  const receiptData = results[0]?.result;
+  if (!receiptData) {
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => alert("Could not read the receipt data from this page. Make sure a Walmart receipt is open, reload the page, and try again.")
+    });
+    return;
+  }
 
   // Performs the fetch from background.js
   if (receiptData) {
@@ -93,6 +98,58 @@ chrome.action.onClicked.addListener(async (tab) => {
     });
   }
 });
+
+// Asks the content script (bridge.js) to build the receipt from Walmart's own JSON data
+async function extractFromApi(tabId) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, { type: 'WRP_EXTRACT_FROM_API' });
+  } catch (err) {
+    // Content scripts only exist in tabs loaded after the extension was installed/reloaded
+    console.warn('API capture unavailable on this tab (reload the page to enable it):', err.message);
+    return null;
+  }
+}
+
+// Logs the raw captured payloads so the parser can be updated if Walmart changes its JSON
+async function logApiPayloadsForDebugging(tabId) {
+  try {
+    const dump = await chrome.tabs.sendMessage(tabId, { type: 'WRP_DUMP_API_PAYLOADS' });
+    console.log('[Receipt Parser] Raw Walmart payloads for debugging:', dump);
+  } catch (_) {}
+}
+
+// Primary: structured JSON (API interception / __NEXT_DATA__). Fallback: DOM scraping.
+async function getReceiptData(tabId) {
+  const [apiResult, domResults] = await Promise.all([
+    extractFromApi(tabId),
+    chrome.scripting.executeScript({ target: { tabId }, func: scrapeReceiptData }).catch((err) => {
+      console.warn('DOM scraper failed to run:', err.message);
+      return null;
+    })
+  ]);
+  const domReceipt = domResults?.[0]?.result || null;
+
+  if (apiResult?.receipt) {
+    const merged = WalmartOrderParser.mergeWithDom(apiResult.receipt, domReceipt);
+    const check = WalmartOrderParser.validateReceipt(merged);
+    if (check.valid) {
+      console.log(`[Receipt Parser] Using API data from ${apiResult.source}`, { warnings: check.warnings, attempts: apiResult.attempts });
+      return merged;
+    }
+  }
+
+  console.warn('[Receipt Parser] API data unavailable or invalid, falling back to DOM scraping.', apiResult?.attempts || apiResult);
+  await logApiPayloadsForDebugging(tabId);
+
+  const domCheck = WalmartOrderParser.validateReceipt(domReceipt);
+  if (domCheck.valid) {
+    console.log('[Receipt Parser] Using DOM-scraped data', { warnings: domCheck.warnings });
+    return domReceipt;
+  }
+
+  console.error('[Receipt Parser] Both API and DOM extraction failed.', { domErrors: domCheck.errors, domReceipt });
+  return null;
+}
 
 // This function gets injected and runs inside the actual webpage
 async function scrapeReceiptData() {
@@ -158,7 +215,8 @@ async function scrapeReceiptData() {
 
     return { receiptDate, transactionCode, orderNumber, storeLocation, subtotal, tax, total, items };
   } catch (error) {
-    alert("Scraper Error: Could not read the receipt data from this page.");
+    // The background worker decides whether to alert, since API data may still be available
     console.error("Scraper Error:", error);
+    return null;
   }
 }

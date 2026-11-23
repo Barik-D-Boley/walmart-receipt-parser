@@ -86,7 +86,7 @@
     "wrap-ansi-cjs": "^7.0.0"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test test/*.test.js",
     "dev": "node --watch server/server.js",
     "start": "node server/server.js",
     "format-env": "node scripts/format-env.js"

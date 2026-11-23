@@ -52,7 +52,7 @@ Built with a **Chrome Extension (Manifest V3)** frontend and an **Express.js / G
 
 ## Key Features
 
-* **Automated DOM Extraction**: Scrapes transaction codes (TC#), order dates, store locations, item names, individual prices, quantities, and weights directly from Walmart order pages.
+* **Resilient Data Extraction**: Reads Walmart's underlying order JSON (with DOM scraping as a fallback) to capture transaction codes (TC#), order dates, store locations, item names, individual prices, quantities, and weights directly from Walmart order pages.
 * **Smart Tab Management**: Automatically creates new spreadsheet tabs named by purchase date and inserts them in chronological order.
 * **Duplicate Prevention**: Reads existing sheet records before writing to ensure identical transaction codes (TC#) are not duplicated.
 * **Native Cell Formatting**: Uses Google Sheets `batchUpdate` to set dynamic accounting currency formats (`$#,##0.00`), bold headers, text clipping, and auto-spaced item columns.
@@ -77,7 +77,10 @@ walmart-receipt-parser/
 ├── extension/
 │   ├── icons/             
 │   │   └── icon.png             # Extension toolbar icon (180x180 PNG)
-│   ├── background.js            # MV3 Service worker & DOM scraping logic
+│   ├── background.js            # MV3 service worker: picks API data, falls back to DOM scraping
+│   ├── interceptor.js           # Page-world script that copies Walmart's JSON API responses
+│   ├── bridge.js                # Content script that collects captured JSON & runs the parser
+│   ├── order-parser.js          # Schema-tolerant parser for Walmart order JSON (+ validation)
 │   ├── manifest.json            # Extension permissions & host access
 │   ├── options.html             # UI for uploading credentials & Spreadsheet ID
 │   └── options.js               # Options handler for chrome.storage.local
@@ -85,6 +88,8 @@ walmart-receipt-parser/
 │   └── format-env.js            # Helper script to format .env JSON strings for local dev
 ├── server/
 │   └── server.js                # Express API & Google Sheets batch update logic
+├── test/
+│   └── order-parser.test.js     # Parser unit tests (npm test)
 ├── .env                         # Local environment variables (User created, ignored by Git)
 ├── .gitignore                   # Ignore node_modules & sensitive JSON keys
 ├── LICENSE                      # MIT License
@@ -183,12 +188,20 @@ Because this extension writes directly to your personal Google Drive, you must g
 
 * **Zero Hardcoded Credentials**: Service Account private keys are managed via environment variables (`GOOGLE_CREDENTIALS`) rather than committed JSON files.
 * **Ignored Secrets**: `.gitignore` explicitly prevents sensitive credentials (`.env`) from being uploaded to GitHub.
-* **Minimal Permissions**: The Chrome extension restricts host execution exclusively to `walmart.com/orders/*` pages.
+* **Minimal Permissions**: Content scripts only run on `www.walmart.com`, and captured data stays in the tab until you click the icon. Only the parsed receipt is sent to the server.
 
-## Roadmap & Limitations
+## How Receipt Data Is Extracted
 
-* **Current Limitation (DOM Dependency):** The parser currently relies on the specific HTML structure of Walmart's order pages (`walmart.com/orders/*`). If Walmart rolls out significant UI updates, the DOM selectors in `background.js` may break and require updating.
-* **Version 2.0 (Planned):** Future releases will move away from brittle DOM scraping. Instead, the extension will utilize **API network interception** to capture the underlying Walmart GraphQL/REST JSON responses silently in the background, making data extraction instantly reliable regardless of frontend UI changes.
+Since v2.0 the extension reads the **JSON data Walmart's own page loads** instead of relying only on HTML tags:
+
+1. **API interception (primary):** `interceptor.js` runs in the page at load time and passively copies JSON responses from Walmart's GraphQL/`orchestra` endpoints (both `fetch` and `XMLHttpRequest`). It never alters or re-sends requests. The server-rendered `__NEXT_DATA__` JSON is used too, for pages opened directly.
+2. **Schema-tolerant parsing:** `order-parser.js` does not depend on exact JSON paths. It locates line items (objects with a name and price) and totals by common key names, so moved or nested fields keep working. If Walmart renames a field, add the new name to the `KEYS` table at the top of the file.
+3. **Validation and fallback:** The result must have items, a total, and a valid date, and must belong to the order in the URL. Otherwise the original DOM scraper is used. DOM values also fill any gaps, and the DOM's text formatting (date, TC#) is kept where both sources agree, so tab names and duplicate detection stay consistent with older entries.
+
+> **Note:** API capture starts when the page loads. After installing or reloading the extension, refresh the Walmart receipt page before clicking the icon.
+
+### Debugging a format change
+If extraction fails, open `chrome://extensions` → **Walmart Receipt Parser** → **service worker** to see which source was used, why the API data was rejected, and a dump of the raw captured payloads. An anonymized payload can be added as a fixture in `test/order-parser.test.js`; run the tests with `npm test`.
 
 ---
 
